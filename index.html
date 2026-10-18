@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>销售数据智能查询</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: #f5f7fa;
+            color: #333;
+            min-height: 100vh;
+            padding: 40px 20px;
+        }
+        .container {
+            max-width: 960px;
+            margin: 0 auto;
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+            padding: 32px;
+        }
+        h1 {
+            font-size: 24px;
+            margin-bottom: 8px;
+            color: #1a1a1a;
+        }
+        .subtitle {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 24px;
+        }
+        .input-group {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+        input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 1px solid #d9d9d9;
+            border-radius: 8px;
+            font-size: 15px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        input:focus { border-color: #1890ff; }
+        button {
+            padding: 12px 24px;
+            background: #1890ff;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 15px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        button:hover { background: #40a9ff; }
+        button:disabled {
+            background: #bae7ff;
+            cursor: not-allowed;
+        }
+        .sql-box {
+            background: #f6f8fa;
+            border: 1px solid #e1e4e8;
+            border-radius: 8px;
+            padding: 12px 16px;
+            font-family: Consolas, Monaco, monospace;
+            font-size: 13px;
+            color: #24292e;
+            margin-bottom: 20px;
+            word-break: break-all;
+            display: none;
+        }
+        .result-box { display: none; }
+        .chart-container {
+            width: 100%;
+            height: 400px;
+            margin-bottom: 20px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+        th, td {
+            padding: 10px 12px;
+            text-align: left;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        th {
+            background: #fafafa;
+            font-weight: 600;
+            color: #333;
+        }
+        tr:hover { background: #fafafa; }
+        .loading {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #1890ff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .error {
+            color: #ff4d4f;
+            background: #fff2f0;
+            border: 1px solid #ffccc7;
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        .big-number {
+            font-size: 36px;
+            font-weight: 700;
+            color: #1890ff;
+            text-align: center;
+            padding: 40px 0;
+        }
+        .examples {
+            margin-top: 8px;
+            font-size: 13px;
+            color: #888;
+        }
+        .examples span {
+            cursor: pointer;
+            margin-right: 12px;
+            text-decoration: underline;
+        }
+        .examples span:hover { color: #1890ff; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>销售数据智能查询</h1>
+        <div class="subtitle">输入中文问题，自动生成 SQL 并展示图表</div>
+
+        <div class="input-group">
+            <input type="text" id="question" placeholder="例如：TikTok上个月卖了多少钱" />
+            <button id="askBtn" onclick="ask()">查询</button>
+        </div>
+        <div class="examples">
+            示例：
+            <span onclick="setQ('TikTok上个月卖了多少钱')">TikTok上个月卖了多少钱</span>
+            <span onclick="setQ('各渠道销售额对比')">各渠道销售额对比</span>
+            <span onclick="setQ('Blind Box 总销售额')">Blind Box 总销售额</span>
+        </div>
+
+        <div id="error" class="error"></div>
+        <div id="sqlBox" class="sql-box"></div>
+
+        <div id="resultBox" class="result-box">
+            <div id="chart" class="chart-container"></div>
+            <div id="tableBox"></div>
+        </div>
+    </div>
+
+    <script>
+        const API = "http://127.0.0.1:5000/ask";
+        let chart = null;
+
+        function setQ(q) {
+            document.getElementById("question").value = q;
+        }
+
+        async function ask() {
+            const question = document.getElementById("question").value.trim();
+            if (!question) return;
+
+            const btn = document.getElementById("askBtn");
+            const errorEl = document.getElementById("error");
+            const sqlEl = document.getElementById("sqlBox");
+            const resultEl = document.getElementById("resultBox");
+
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading"></span>查询中';
+            errorEl.style.display = "none";
+            sqlEl.style.display = "none";
+            resultEl.style.display = "none";
+
+            try {
+                const res = await fetch(API, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ question })
+                });
+                const data = await res.json();
+
+                if (!res.ok) {
+                    throw new Error(data.error || "查询失败");
+                }
+
+                sqlEl.textContent = data.sql;
+                sqlEl.style.display = "block";
+
+                if (data.rows && data.rows.length > 0) {
+                    renderResult(data.columns, data.rows);
+                } else {
+                    resultEl.innerHTML = '<div class="big-number">无数据</div>';
+                }
+                resultEl.style.display = "block";
+            } catch (e) {
+                errorEl.textContent = e.message;
+                errorEl.style.display = "block";
+            } finally {
+                btn.disabled = false;
+                btn.textContent = "查询";
+            }
+        }
+
+        function renderResult(columns, rows) {
+            const tableBox = document.getElementById("tableBox");
+            const chartEl = document.getElementById("chart");
+
+            if (rows.length === 1 && columns.length === 1 && typeof rows[0][columns[0]] === "number") {
+                chartEl.style.display = "none";
+                tableBox.innerHTML = `<div class="big-number">${formatNumber(rows[0][columns[0]])}</div>`;
+                return;
+            }
+
+            chartEl.style.display = "block";
+            if (chart) chart.dispose();
+            chart = echarts.init(chartEl);
+
+            const xKey = columns[0];
+            const yKeys = columns.slice(1).filter(c => typeof rows[0][c] === "number");
+            const isDate = xKey === "date";
+
+            const option = {
+                tooltip: { trigger: "axis" },
+                legend: { data: yKeys, bottom: 0 },
+                grid: { left: "3%", right: "4%", bottom: "15%", containLabel: true },
+                xAxis: {
+                    type: "category",
+                    data: rows.map(r => r[xKey]),
+                    axisLabel: { rotate: isDate ? 45 : 0 }
+                },
+                yAxis: { type: "value" },
+                series: yKeys.map(k => ({
+                    name: k,
+                    type: isDate ? "line" : "bar",
+                    data: rows.map(r => r[k]),
+                    smooth: true
+                }))
+            };
+            chart.setOption(option);
+
+            let html = "<table><thead><tr>";
+            columns.forEach(c => html += `<th>${c}</th>`);
+            html += "</tr></thead><tbody>";
+            rows.forEach(r => {
+                html += "<tr>";
+                columns.forEach(c => {
+                    const v = r[c];
+                    html += `<td>${typeof v === "number" ? formatNumber(v) : v}</td>`;
+                });
+                html += "</tr>";
+            });
+            html += "</tbody></table>";
+            tableBox.innerHTML = html;
+        }
+
+        function formatNumber(n) {
+            if (n === null || n === undefined) return "-";
+            return n.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
+        }
+
+        document.getElementById("question").addEventListener("keypress", e => {
+            if (e.key === "Enter") ask();
+        });
+    </script>
+</body>
+</html>
